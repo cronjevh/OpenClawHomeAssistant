@@ -85,12 +85,18 @@ case "$ACCESS_MODE" in
     ;;
   lan_reverse_proxy)
     GATEWAY_BIND_MODE="lan"
-    GATEWAY_AUTH_MODE="trusted-proxy"
-    if [ -z "$GATEWAY_TRUSTED_PROXIES" ]; then
-      echo "ERROR: access_mode=lan_reverse_proxy requires gateway_trusted_proxies to be set."
-      echo "ERROR: Set it to your reverse proxy's IP/CIDR (e.g. 127.0.0.1,192.168.88.0/24)."
+    # Respect an explicit auth mode from add-on options; default behavior
+    # remains trusted-proxy guidance for reverse-proxy deployments.
+    if [ "$GATEWAY_AUTH_MODE" = "trusted-proxy" ]; then
+      if [ -z "$GATEWAY_TRUSTED_PROXIES" ]; then
+        echo "ERROR: access_mode=lan_reverse_proxy with gateway_auth_mode=trusted-proxy requires gateway_trusted_proxies to be set."
+        echo "ERROR: Set it to your reverse proxy's IP/CIDR (e.g. 127.0.0.1,192.168.88.0/24)."
+      fi
+      echo "INFO: Access mode: lan_reverse_proxy (LAN bind + trusted-proxy auth)"
+    else
+      echo "INFO: Access mode: lan_reverse_proxy (LAN bind + token auth override)"
+      echo "INFO: gateway_auth_mode=token is preserved from add-on configuration."
     fi
-    echo "INFO: Access mode: lan_reverse_proxy (LAN bind + trusted-proxy auth)"
     ;;
   tailnet_https)
     GATEWAY_BIND_MODE="tailnet"
