@@ -2,6 +2,17 @@
 
 All notable changes to the OpenClaw Assistant Home Assistant Add-on will be documented in this file.
 
+## [0.5.55] - 2026-03-05
+
+### Added
+- New add-on option `openclaw_npm_version` to pin/update OpenClaw runtime npm version on startup without changing add-on image version.
+
+### Changed
+- Startup now logs current OpenClaw runtime version, requested `openclaw_npm_version`, and whether runtime npm update was applied or skipped.
+
+### Fixed
+- Runtime-only OpenClaw updates are now possible in add-on mode even when upstream `update.run` is skipped.
+
 ## [0.5.54] - 2026-02-25
 
 ### Changed

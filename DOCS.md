@@ -260,6 +260,7 @@ All options are set via **Settings → Apps/Add-ons → OpenClaw Assistant → C
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `timezone` | string | `Europe/Sofia` | Timezone for the add-on (e.g., `America/New_York`, `Europe/London`) |
+| `openclaw_npm_version` | string | _(empty)_ | Optional runtime-only OpenClaw npm version pin (example: `2026.2.24`). Empty keeps the image-bundled runtime version. |
 
 ### Gateway
 
@@ -685,6 +686,25 @@ The add-on version is shown on the add-on page in Home Assistant. To check the O
 ```sh
 openclaw --version
 ```
+
+### Runtime-only update via `openclaw_npm_version`
+
+Use this when you want to change only the OpenClaw runtime version without rebuilding/upgrading the add-on image.
+
+1. Go to **Settings → Add-ons → OpenClaw Assistant → Configuration**
+2. Set `openclaw_npm_version` to the target version (example: `2026.2.24`)
+3. Restart the add-on
+4. Check logs for current/requested/applied update status
+5. Verify runtime version:
+   ```sh
+   openclaw --version
+   ```
+
+Rollback example:
+
+1. Set `openclaw_npm_version` to the previous known-good version (example: `2026.2.23`)
+2. Restart the add-on
+3. Verify with `openclaw --version`
 
 ### Backup
 

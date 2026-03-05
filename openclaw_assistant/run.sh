@@ -18,6 +18,7 @@ fi
 # ------------------------------------------------------------------------------
 
 TZNAME=$(jq -r '.timezone // "Europe/Sofia"' "$OPTIONS_FILE")
+OPENCLAW_NPM_VERSION_RAW=$(jq -r '.openclaw_npm_version // empty' "$OPTIONS_FILE")
 GW_PUBLIC_URL=$(jq -r '.gateway_public_url // empty' "$OPTIONS_FILE")
 HA_TOKEN=$(jq -r '.homeassistant_token // empty' "$OPTIONS_FILE")
 ADDON_HTTP_PROXY=$(jq -r '.http_proxy // empty' "$OPTIONS_FILE")
@@ -491,6 +492,45 @@ trap shutdown INT TERM
 if ! command -v openclaw >/dev/null 2>&1; then
   echo "ERROR: openclaw is not installed."
   exit 1
+fi
+
+# Optional runtime-only OpenClaw npm version pin from add-on options.
+# This updates the runtime package in-place without changing add-on image version.
+OPENCLAW_NPM_VERSION="$(printf '%s' "$OPENCLAW_NPM_VERSION_RAW" | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//')"
+CURRENT_OPENCLAW_VERSION_RAW="$(openclaw --version 2>/dev/null | head -n1 | tr -d '\r' || true)"
+CURRENT_OPENCLAW_VERSION_DETECTED="$(printf '%s' "$CURRENT_OPENCLAW_VERSION_RAW" | grep -Eo 'v?[0-9]+(\.[0-9]+){1,3}([.-][0-9A-Za-z]+)*' | head -n1 || true)"
+if [ -z "$CURRENT_OPENCLAW_VERSION_DETECTED" ]; then
+  CURRENT_OPENCLAW_VERSION_DETECTED="$CURRENT_OPENCLAW_VERSION_RAW"
+fi
+CURRENT_OPENCLAW_VERSION_NORMALIZED="$(printf '%s' "$CURRENT_OPENCLAW_VERSION_DETECTED" | sed -E 's/^v//')"
+
+echo "INFO: OpenClaw runtime current version: ${CURRENT_OPENCLAW_VERSION_DETECTED:-unknown}"
+if [ -n "$OPENCLAW_NPM_VERSION" ]; then
+  echo "INFO: OpenClaw runtime requested version (openclaw_npm_version): $OPENCLAW_NPM_VERSION"
+
+  if ! [[ "$OPENCLAW_NPM_VERSION" =~ ^v?[0-9]+(\.[0-9]+){1,3}([.-][0-9A-Za-z]+)*$ ]]; then
+    echo "WARN: openclaw_npm_version '$OPENCLAW_NPM_VERSION' is not a valid version string. Skipping runtime npm update."
+  else
+    REQUESTED_OPENCLAW_VERSION_NORMALIZED="$(printf '%s' "$OPENCLAW_NPM_VERSION" | sed -E 's/^v//')"
+
+    if [ "$CURRENT_OPENCLAW_VERSION_NORMALIZED" = "$REQUESTED_OPENCLAW_VERSION_NORMALIZED" ]; then
+      echo "INFO: OpenClaw runtime update skipped: requested version already installed."
+    else
+      echo "INFO: Applying runtime-only OpenClaw update via npm: openclaw@${OPENCLAW_NPM_VERSION}"
+      if npm i -g "openclaw@${OPENCLAW_NPM_VERSION}"; then
+        UPDATED_OPENCLAW_VERSION_RAW="$(openclaw --version 2>/dev/null | head -n1 | tr -d '\r' || true)"
+        UPDATED_OPENCLAW_VERSION_DETECTED="$(printf '%s' "$UPDATED_OPENCLAW_VERSION_RAW" | grep -Eo 'v?[0-9]+(\.[0-9]+){1,3}([.-][0-9A-Za-z]+)*' | head -n1 || true)"
+        if [ -z "$UPDATED_OPENCLAW_VERSION_DETECTED" ]; then
+          UPDATED_OPENCLAW_VERSION_DETECTED="$UPDATED_OPENCLAW_VERSION_RAW"
+        fi
+        echo "INFO: OpenClaw runtime update applied. Current version: ${UPDATED_OPENCLAW_VERSION_DETECTED:-unknown}"
+      else
+        echo "ERROR: Failed to install openclaw@${OPENCLAW_NPM_VERSION} via npm. Continuing with currently installed runtime."
+      fi
+    fi
+  fi
+else
+  echo "INFO: OpenClaw runtime requested version not set (openclaw_npm_version is empty); skipping runtime npm update."
 fi
 
 # Bootstrap minimal OpenClaw config ONLY if missing.
