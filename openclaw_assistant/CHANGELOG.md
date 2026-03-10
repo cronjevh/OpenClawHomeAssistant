@@ -2,6 +2,11 @@
 
 All notable changes to the OpenClaw Assistant Home Assistant Add-on will be documented in this file.
 
+## [0.5.58] - 2026-03-10
+
+### Fixed
+- Prevent repeated legacy `/config` to `/data` state merges on every add-on startup. Legacy migration now completes once and future restarts skip the merge, which avoids session-memory/index regressions after restart.
+
 ## [0.5.57] - 2026-03-10
 
 ### Changed

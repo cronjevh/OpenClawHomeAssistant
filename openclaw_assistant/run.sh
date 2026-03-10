@@ -163,6 +163,8 @@ mkdir -p \
   "${ADDON_STATE_DIR}/secrets" \
   "${ADDON_STATE_DIR}/certs"
 
+LEGACY_MIGRATION_MARKER="${OPENCLAW_STATE_DIR}/.legacy_config_migration_complete"
+
 dir_is_empty() {
   [ ! -d "$1" ] || [ -z "$(ls -A "$1" 2>/dev/null)" ]
 }
@@ -194,13 +196,19 @@ migrate_legacy_dir() {
   fi
 }
 
-migrate_legacy_dir "${LEGACY_STATE_DIR}/.openclaw" "${OPENCLAW_STATE_DIR}" "OpenClaw state"
-migrate_legacy_dir "${LEGACY_STATE_DIR}/clawd" "${OPENCLAW_WORKSPACE_DIR}" "workspace"
-migrate_legacy_dir "${LEGACY_STATE_DIR}/.node_global" "${ADDON_STATE_DIR}/.node_global" "Node global installs"
-migrate_legacy_dir "${LEGACY_STATE_DIR}/.linuxbrew" "${ADDON_STATE_DIR}/.linuxbrew" "Homebrew"
-migrate_legacy_dir "${LEGACY_STATE_DIR}/keys" "${ADDON_STATE_DIR}/keys" "keys"
-migrate_legacy_dir "${LEGACY_STATE_DIR}/secrets" "${ADDON_STATE_DIR}/secrets" "secrets"
-migrate_legacy_dir "${LEGACY_STATE_DIR}/certs" "${ADDON_STATE_DIR}/certs" "certificates"
+if [ ! -f "${LEGACY_MIGRATION_MARKER}" ]; then
+  migrate_legacy_dir "${LEGACY_STATE_DIR}/.openclaw" "${OPENCLAW_STATE_DIR}" "OpenClaw state"
+  migrate_legacy_dir "${LEGACY_STATE_DIR}/clawd" "${OPENCLAW_WORKSPACE_DIR}" "workspace"
+  migrate_legacy_dir "${LEGACY_STATE_DIR}/.node_global" "${ADDON_STATE_DIR}/.node_global" "Node global installs"
+  migrate_legacy_dir "${LEGACY_STATE_DIR}/.linuxbrew" "${ADDON_STATE_DIR}/.linuxbrew" "Homebrew"
+  migrate_legacy_dir "${LEGACY_STATE_DIR}/keys" "${ADDON_STATE_DIR}/keys" "keys"
+  migrate_legacy_dir "${LEGACY_STATE_DIR}/secrets" "${ADDON_STATE_DIR}/secrets" "secrets"
+  migrate_legacy_dir "${LEGACY_STATE_DIR}/certs" "${ADDON_STATE_DIR}/certs" "certificates"
+  touch "${LEGACY_MIGRATION_MARKER}"
+  echo "INFO: Legacy /config migration completed; future startups will skip it."
+else
+  echo "INFO: Legacy /config migration already completed; skipping repeated merge."
+fi
 
 # ------------------------------------------------------------------------------
 # Sync built-in OpenClaw skills from image to persistent storage
