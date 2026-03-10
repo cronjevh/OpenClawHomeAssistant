@@ -2,6 +2,14 @@
 
 All notable changes to the OpenClaw Assistant Home Assistant Add-on will be documented in this file.
 
+## [0.5.57] - 2026-03-10
+
+### Changed
+- Bump bundled OpenClaw runtime to `2026.3.8`.
+
+### Fixed
+- Store OpenClaw runtime state under `/data` instead of `/config`, with one-way migration for legacy installs. This keeps session history, memory indexes, and workspace state in the add-on's persistent storage and avoids memory loss after restarts.
+
 ## [0.5.55] - 2026-03-05
 
 ### Added

@@ -143,27 +143,75 @@ if [ "$FORCE_IPV4_DNS" = "true" ] || [ "$FORCE_IPV4_DNS" = "1" ]; then
   echo "INFO: Enabled IPv4-first DNS ordering (NODE_OPTIONS=--dns-result-order=ipv4first)"
 fi
 
-# HA add-ons mount persistent storage at /config (maps to /addon_configs/<slug> on the host).
-export HOME=/config
+# Home Assistant add-ons mount add-on-private persistent storage at /data.
+# /config is Home Assistant's shared config volume and should not hold add-on runtime state.
+ADDON_STATE_DIR="/data"
+HA_CONFIG_DIR="/config"
+LEGACY_STATE_DIR="${HA_CONFIG_DIR}"
+export HOME="${ADDON_STATE_DIR}"
+export OPENCLAW_STATE_DIR="${ADDON_STATE_DIR}/.openclaw"
+export OPENCLAW_CONFIG_DIR="${OPENCLAW_STATE_DIR}"
+export OPENCLAW_WORKSPACE_DIR="${ADDON_STATE_DIR}/clawd"
+export XDG_CONFIG_HOME="${ADDON_STATE_DIR}"
 
-# Explicitly set OpenClaw directories to ensure they persist across add-on updates
-# This prevents loss of installed skills, configuration, and workspace state
-export OPENCLAW_CONFIG_DIR=/config/.openclaw
-export OPENCLAW_WORKSPACE_DIR=/config/clawd
-export XDG_CONFIG_HOME=/config
+mkdir -p \
+  "${OPENCLAW_STATE_DIR}" \
+  "${OPENCLAW_STATE_DIR}/identity" \
+  "${OPENCLAW_STATE_DIR}/agents/main/sessions" \
+  "${OPENCLAW_WORKSPACE_DIR}" \
+  "${ADDON_STATE_DIR}/keys" \
+  "${ADDON_STATE_DIR}/secrets" \
+  "${ADDON_STATE_DIR}/certs"
 
-mkdir -p /config/.openclaw /config/.openclaw/identity /config/clawd /config/keys /config/secrets
+dir_is_empty() {
+  [ ! -d "$1" ] || [ -z "$(ls -A "$1" 2>/dev/null)" ]
+}
+
+migrate_legacy_dir() {
+  local src="$1"
+  local dst="$2"
+  local label="$3"
+
+  if [ ! -d "$src" ] || [ "$src" = "$dst" ]; then
+    return 0
+  fi
+
+  mkdir -p "$dst"
+  if dir_is_empty "$dst"; then
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a "$src"/ "$dst"/ 2>/dev/null || true
+    else
+      cp -a "$src"/. "$dst"/ 2>/dev/null || true
+    fi
+    echo "INFO: Migrated legacy ${label} from ${src} to ${dst}"
+  else
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a --ignore-existing "$src"/ "$dst"/ 2>/dev/null || true
+    else
+      cp -an "$src"/. "$dst"/ 2>/dev/null || true
+    fi
+    echo "INFO: Merged legacy ${label} from ${src} into ${dst}"
+  fi
+}
+
+migrate_legacy_dir "${LEGACY_STATE_DIR}/.openclaw" "${OPENCLAW_STATE_DIR}" "OpenClaw state"
+migrate_legacy_dir "${LEGACY_STATE_DIR}/clawd" "${OPENCLAW_WORKSPACE_DIR}" "workspace"
+migrate_legacy_dir "${LEGACY_STATE_DIR}/.node_global" "${ADDON_STATE_DIR}/.node_global" "Node global installs"
+migrate_legacy_dir "${LEGACY_STATE_DIR}/.linuxbrew" "${ADDON_STATE_DIR}/.linuxbrew" "Homebrew"
+migrate_legacy_dir "${LEGACY_STATE_DIR}/keys" "${ADDON_STATE_DIR}/keys" "keys"
+migrate_legacy_dir "${LEGACY_STATE_DIR}/secrets" "${ADDON_STATE_DIR}/secrets" "secrets"
+migrate_legacy_dir "${LEGACY_STATE_DIR}/certs" "${ADDON_STATE_DIR}/certs" "certificates"
 
 # ------------------------------------------------------------------------------
 # Sync built-in OpenClaw skills from image to persistent storage
 # On each startup, copy new/updated built-in skills so they survive rebuilds.
-# We sync them to /config/.openclaw/skills and symlink back.
-# NOTE: We cannot use `npm root -g` here because HOME=/config may contain a
+# We sync them to /data/.openclaw/skills and symlink back.
+# NOTE: We cannot use `npm root -g` here because HOME=/data may contain a
 # persisted .npmrc with a custom prefix from a previous run. Instead, we
 # resolve the real image path by temporarily overriding HOME.
 # ------------------------------------------------------------------------------
 IMAGE_SKILLS_DIR="$(HOME=/root npm root -g 2>/dev/null)/openclaw/skills"
-PERSISTENT_SKILLS_DIR="/config/.openclaw/skills"
+PERSISTENT_SKILLS_DIR="${OPENCLAW_STATE_DIR}/skills"
 
 if [ -d "$IMAGE_SKILLS_DIR" ] && [ ! -L "$IMAGE_SKILLS_DIR" ]; then
   mkdir -p "$PERSISTENT_SKILLS_DIR"
@@ -186,11 +234,11 @@ fi
 
 # ------------------------------------------------------------------------------
 # Persist user-installed node skills across Docker image rebuilds
-# Redirect npm/pnpm global installs to /config/.node_global (persistent storage)
+# Redirect npm/pnpm global installs to /data/.node_global (persistent storage)
 # so that skills installed via the dashboard survive container rebuilds.
 # NOTE: This MUST come after the skills sync above (which needs the original npm root -g).
 # ------------------------------------------------------------------------------
-PERSISTENT_NODE_GLOBAL="/config/.node_global"
+PERSISTENT_NODE_GLOBAL="${ADDON_STATE_DIR}/.node_global"
 mkdir -p "$PERSISTENT_NODE_GLOBAL"
 npm config set prefix "$PERSISTENT_NODE_GLOBAL" 2>/dev/null || true
 export PATH="${PERSISTENT_NODE_GLOBAL}/bin:${PATH}"
@@ -338,11 +386,11 @@ fi
 # ------------------------------------------------------------------------------
 # Persist Linuxbrew/Homebrew across Docker image rebuilds
 # Homebrew installs to /home/linuxbrew/.linuxbrew/ which is ephemeral.
-# We sync it to /config/.linuxbrew and symlink back so brew-installed CLI
+# We sync it to /data/.linuxbrew and symlink back so brew-installed CLI
 # tools (gog, gh, bw, etc.) survive add-on updates.
 # ------------------------------------------------------------------------------
 IMAGE_BREW_DIR="/home/linuxbrew/.linuxbrew"
-PERSISTENT_BREW_DIR="/config/.linuxbrew"
+PERSISTENT_BREW_DIR="${ADDON_STATE_DIR}/.linuxbrew"
 
 if [ -d "$IMAGE_BREW_DIR" ] && [ ! -L "$IMAGE_BREW_DIR" ]; then
   # Image has a real Homebrew install — sync to persistent storage
@@ -374,18 +422,13 @@ else
   echo "INFO: Homebrew not available (install may have failed during image build)"
 fi
 
-# Back-compat: some docs/scripts assume /data; point it at /config.
-if [ ! -e /data ]; then
-  ln -s /config /data || true
-fi
-
 # Ensure these exist so cleanup doesn't fail
-mkdir -p /config/.openclaw/agents/main/sessions || true
+mkdir -p "${OPENCLAW_STATE_DIR}/agents/main/sessions" || true
 
 # ------------------------------------------------------------------------------
 # SINGLE-INSTANCE GUARD (prevents multiple gateway runs racing each other)
 # ------------------------------------------------------------------------------
-STARTUP_LOCK="/config/.openclaw/gateway.start.lock"
+STARTUP_LOCK="${OPENCLAW_STATE_DIR}/gateway.start.lock"
 exec 9>"$STARTUP_LOCK"
 if ! flock -n 9; then
   echo "ERROR: Another instance appears to be running (could not acquire $STARTUP_LOCK)."
@@ -402,7 +445,7 @@ gateway_running() {
 }
 
 cleanup_session_locks() {
-  local sessions_dir="/config/.openclaw/agents/main/sessions"
+  local sessions_dir="${OPENCLAW_STATE_DIR}/agents/main/sessions"
   local glob1="${sessions_dir}"/*.jsonl.lock
 
   shopt -s nullglob
@@ -436,18 +479,18 @@ fi
 
 if [ -n "$HA_TOKEN" ]; then
   umask 077
-  printf '%s' "$HA_TOKEN" > /config/secrets/homeassistant.token
+  printf '%s' "$HA_TOKEN" > "${ADDON_STATE_DIR}/secrets/homeassistant.token"
 fi
 
 
 # ------------------------------------------------------------------------------
 # OpenClaw config is managed by OpenClaw itself (onboarding / configure).
-# This add-on intentionally does NOT create/patch /config/.openclaw/openclaw.json.
+# This add-on intentionally does NOT create/patch ${OPENCLAW_STATE_DIR}/openclaw.json.
 # ------------------------------------------------------------------------------
 
 # Convenience info for later (router SSH access path & HA token file)
-cat > /config/CONNECTION_NOTES.txt <<EOF
-Home Assistant token (if set): /config/secrets/homeassistant.token
+cat > "${ADDON_STATE_DIR}/CONNECTION_NOTES.txt" <<EOF
+Home Assistant token (if set): ${ADDON_STATE_DIR}/secrets/homeassistant.token
 Router SSH (generic):
   host=${ROUTER_HOST}
   user=${ROUTER_USER}
@@ -535,7 +578,7 @@ fi
 
 # Bootstrap minimal OpenClaw config ONLY if missing.
 # We do not overwrite or patch existing configs; onboarding owns everything else.
-OPENCLAW_CONFIG_PATH="/config/.openclaw/openclaw.json"
+OPENCLAW_CONFIG_PATH="${OPENCLAW_STATE_DIR}/openclaw.json"
 if [ ! -f "$OPENCLAW_CONFIG_PATH" ]; then
   echo "INFO: OpenClaw config missing; bootstrapping minimal config at $OPENCLAW_CONFIG_PATH"
   python3 - <<'PY'
@@ -543,7 +586,7 @@ import json
 import secrets
 from pathlib import Path
 
-cfg_path = Path('/config/.openclaw/openclaw.json')
+cfg_path = Path('/data/.openclaw/openclaw.json')
 cfg_path.parent.mkdir(parents=True, exist_ok=True)
 
 cfg = {
@@ -558,7 +601,7 @@ cfg = {
   },
   "agents": {
     "defaults": {
-      "workspace": "/config/clawd"
+      "workspace": "/data/clawd"
     }
   }
 }
@@ -572,7 +615,7 @@ fi
 # Apply gateway LAN mode settings safely using helper script
 # This updates gateway.bind and gateway.port without touching other settings
 # ------------------------------------------------------------------------------
-export OPENCLAW_CONFIG_PATH="/config/.openclaw/openclaw.json"
+export OPENCLAW_CONFIG_PATH="${OPENCLAW_STATE_DIR}/openclaw.json"
 
 # Find the helper script (copied to root in Dockerfile, or fallback to add-on dir)
 HELPER_PATH="/oc_config_helper.py"
@@ -612,7 +655,7 @@ fi
 # ------------------------------------------------------------------------------
 LAN_IP=""
 if [ "$ENABLE_HTTPS_PROXY" = "true" ]; then
-  CERT_DIR="/config/certs"
+  CERT_DIR="${ADDON_STATE_DIR}/certs"
   mkdir -p "$CERT_DIR"
 
   # Detect primary LAN IP
@@ -864,17 +907,17 @@ fi
 # Read directly from config file — the CLI redacts secrets since v2026.2.22+.
 GW_TOKEN="$(python3 -c "
 import json, os
-p = os.environ.get('OPENCLAW_CONFIG_PATH', '/config/.openclaw/openclaw.json')
+p = os.environ.get('OPENCLAW_CONFIG_PATH', '/data/.openclaw/openclaw.json')
 print(json.load(open(p)).get('gateway',{}).get('auth',{}).get('token',''), end='')
 " 2>/dev/null || true)"
 
 # Collect disk usage for landing page status card
 DISK_TOTAL="" DISK_USED="" DISK_AVAIL="" DISK_PCT=""
-if df -h /config >/dev/null 2>&1; then
-  DISK_TOTAL=$(df -h /config | awk 'NR==2{print $2}')
-  DISK_USED=$(df -h /config | awk 'NR==2{print $3}')
-  DISK_AVAIL=$(df -h /config | awk 'NR==2{print $4}')
-  DISK_PCT=$(df -h /config | awk 'NR==2{print $5}')
+if df -h "${ADDON_STATE_DIR}" >/dev/null 2>&1; then
+  DISK_TOTAL=$(df -h "${ADDON_STATE_DIR}" | awk 'NR==2{print $2}')
+  DISK_USED=$(df -h "${ADDON_STATE_DIR}" | awk 'NR==2{print $3}')
+  DISK_AVAIL=$(df -h "${ADDON_STATE_DIR}" | awk 'NR==2{print $4}')
+  DISK_PCT=$(df -h "${ADDON_STATE_DIR}" | awk 'NR==2{print $5}')
   echo "INFO: Disk usage: ${DISK_USED}/${DISK_TOTAL} (${DISK_PCT} used, ${DISK_AVAIL} free)"
   # Warn early if disk is getting full
   DISK_PCT_NUM=${DISK_PCT//%/}
